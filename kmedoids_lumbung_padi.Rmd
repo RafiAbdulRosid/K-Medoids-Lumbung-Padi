@@ -1,0 +1,568 @@
+---
+title: Implementasi K-Medoids Clustering untuk Identifikasi Karakteristik Tipologi
+  Wilayah Lumbung Padi di Provinsi Jawa Tengah
+author: "Rafi Abdul Rosid ~ Mahasiswa Statistika Universitas Diponegoro"
+date: '2026-03-07'
+output:
+  html_document:
+    toc: yes
+    toc_float:
+      collapsed: no
+      smooth_scroll: yes
+    theme: lumen
+    highlight: pygments
+    number_sections: no
+    df_print: paged
+  word_document:
+    toc: yes
+---
+
+<style>
+/* Mengimpor Font Modern dari Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap');
+
+body {
+  text-align: justify;
+  font-family: 'Poppins', sans-serif;
+  font-size: 15px;
+  line-height: 1.8;
+  color: #333333;
+  background-color: #fafafa;
+}
+
+/* Mengubah warna Judul Bab menjadi Hijau Tua elegan */
+h1, h2, h3 {
+  color: #2E7D32; 
+  font-weight: 600;
+  margin-top: 30px;
+}
+
+/* Mempercantik Judul Utama, Nama Penulis, dan Tanggal */
+h1.title {
+  text-align: center;
+  font-size: 38px; /* <-- Ukuran judul sudah diperbesar */
+  line-height: 1.4; /* <-- Jarak baris judul agar lebih rapi */
+  color: #1B5E20;
+  margin-bottom: 15px;
+  font-weight: bold;
+}
+h4.author, h4.date {
+  text-align: center;
+  color: #666666;
+  font-weight: 400;
+}
+
+/* Menyesuaikan warna Table of Contents (Daftar Isi) di sebelah kiri */
+.list-group-item.active, .list-group-item.active:hover, .list-group-item.active:focus {
+  background-color: #4CAF50;
+  border-color: #4CAF50;
+}
+
+/* Mempercantik kotak kode (Code Chunk) */
+pre {
+  background-color: #f8f9fa;
+  border: none;
+  border-left: 4px solid #4CAF50;
+  border-radius: 4px;
+}
+</style>
+
+# 1. Pendahuluan
+Provinsi Jawa Tengah merupakan salah satu lumbung padi nasional yang menempati peringkat kedua sebagai produsen padi terbesar di Indonesia. Berdasarkan data Badan Pusat Statistik (BPS) tahun 2024, luas panen padi di Jawa Tengah mencapai sekitar 1,55 juta hektar dengan total produksi sebesar 8,89 juta ton dan produktivitas rata-rata 57,19 ku/ha. Meskipun demikian, kontribusi produksi padi tidak tersebar merata di seluruh wilayah, sehingga terdapat perbedaan potensi atau disparitas yang mencolok antar kabupaten/kota.
+
+Untuk memahami karakteristik sektor pertanian padi secara lebih komprehensif, diperlukan analisis yang mampu mengidentifikasi pola dan tipologi wilayah berdasarkan indikator pertanian. Variasi antar wilayah dapat dipengaruhi oleh beberapa faktor seperti jumlah Usaha Tani Perorangan (UTP), total produksi padi, serta ketersediaan infrastruktur pengairan baik irigasi teknis maupun non-teknis. Pengelompokan ini sangat penting untuk menentukan strategi penguatan lumbung padi yang tepat sasaran bagi pemerintah daerah.
+
+Oleh karena itu, analisis ini menggunakan metode K-Medoids Clustering untuk mengelompokkan wilayah berdasarkan kesamaan karakteristik sumber daya padi. Metode ini dipilih karena lebih robust terhadap nilai ekstrem (outlier) yang sering muncul dalam data pertanian Jawa Tengah. Selain itu, kualitas hasil klaster dievaluasi menggunakan Silhouette Coefficient untuk memastikan bahwa pengelompokan wilayah yang dihasilkan mampu merepresentasikan struktur data secara akurat.
+
+# 2. Analisis Deskriptif
+Analisis deskriptif digunakan untuk memotret karakteristik dasar dari data yang dikaji dalam penelitian ini. Melalui statistik deskriptif seperti nilai minimum, maksimum, serta rata-rata, kita dapat memahami pola sebaran dan pemusatan pada setiap variabel indikator lumbung padi. Observasi terhadap 35 kabupaten/kota di Provinsi Jawa Tengah menunjukkan keberagaman profil pertanian yang cukup kontras. Hal ini mengindikasikan adanya ketimpangan produktivitas yang nyata antarwilayah, di mana terdapat jarak yang lebar antara daerah dengan produksi terendah dan tertinggi.
+
+Tabel di bawah ini merangkum kondisi empat indikator utama yang merepresentasikan potensi lumbung padi serta kesiapan infrastruktur irigasi di wilayah penelitian:
+
+```{r analisis_deskriptif}
+# 1. Persiapan Data
+library(tidyverse)
+library(readxl)
+library(janitor)
+library(knitr)
+
+# Memuat data
+df <- read_excel("DATASET LUMBUNG PADI FIKS.xlsx") %>% clean_names()
+print(df, n = Inf, width = Inf)
+
+# Menentukan variabel utama
+features <- c(
+  "utp_tanaman_pangan_unit",
+  "produksi_padi_ton",
+  "luas_lahan_sawah_dengan_pengairan_teknis_ha",
+  "luas_lahan_sawah_dengan_pengairan_non_teknis_ha"
+)
+
+# 2. Tabel Statistik Deskriptif dengan Kolom Satuan Terpisah
+df %>%
+  select(all_of(features)) %>%
+  summarise(across(everything(), list(
+    Minimum = ~min(., na.rm = TRUE),
+    Maksimum = ~max(., na.rm = TRUE),
+    Rata = ~mean(., na.rm = TRUE)
+  ))) %>%
+  pivot_longer(everything(), 
+               names_to = c("Variabel", ".value"), 
+               names_pattern = "(.*)_(Minimum|Maksimum|Rata)") %>%
+  mutate(
+    # Membuat kolom Satuan berdasarkan nama variabel
+    Satuan = case_when(
+      str_detect(Variabel, "unit") ~ "Unit",
+      str_detect(Variabel, "ton") ~ "Ton",
+      str_detect(Variabel, "ha") ~ "Hektar",
+      TRUE ~ "-"
+    ),
+    # Membersihkan nama variabel dari imbuhan unit dan underscore
+    Variabel = str_replace_all(Variabel, "_unit$|_ton$|_ha$", ""),
+    Variabel = str_replace_all(Variabel, "_", " "),
+    Variabel = str_to_title(Variabel)
+  ) %>%
+  # Mengatur urutan kolom agar Satuan berada di sebelah Indikator
+  select(Variabel, Satuan, Minimum, Maksimum, Rata) %>%
+  kable(caption = "Statistik Deskriptif Dataset Lumbung Padi Jawa Tengah", 
+        digits = 2, 
+        format.args = list(big.mark = "."), # Menambahkan titik pemisah ribuan
+        col.names = c("Indikator", "Satuan", "Minimum", "Maksimum", "Rata-Rata"))
+```
+
+```{r visualisasi_deskriptif, fig.height=12, fig.width=10}
+library(gridExtra)
+library(stringr)
+
+# Membuat list plot secara otomatis dengan penyesuaian nama wilayah
+plot_list <- map(features, function(col_name) {
+  
+  # 1. Membersihkan judul variabel (menghapus satuan dan underscore)
+  clean_title <- str_replace_all(col_name, "_unit|_ton|_ha", "")
+  clean_title <- str_to_title(str_replace_all(clean_title, "_", " "))
+  
+  # 2. Membuat plot
+  df %>%
+    mutate(
+      # Menyesuaikan nama wilayah: Kabupaten -> Kab. dan Kota tetap Kota
+      kab_kota_clean = str_replace(kab_kota, "Kabupaten", "Kab."),
+      # Mengurutkan berdasarkan nilai variabel
+      kab_kota_clean = reorder(kab_kota_clean, !!sym(col_name))
+    ) %>%
+    ggplot(aes(x = kab_kota_clean, y = !!sym(col_name), fill = !!sym(col_name))) +
+    geom_bar(stat = "identity", show.legend = FALSE) +
+    coord_flip() +
+    # Menggunakan gradasi hijau (Lumbung Padi)
+    scale_fill_gradient(low = "#E2EFDA", high = "#385723") +
+    labs(
+      title = clean_title,
+      x = NULL,
+      y = "Nilai Riil"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.y = element_text(size = 8), # Ukuran teks wilayah agar tidak berhimpitan
+      title = element_text(face = "bold", size = 11),
+      panel.grid.minor = element_blank()
+    )
+})
+
+# Menampilkan 4 grafik dalam susunan 2 kolom
+grid.arrange(grobs = plot_list, ncol = 2)
+
+```
+Berdasarkan visualisasi grafik di atas, terlihat bahwa Kabupaten Cilacap, Kebumen, dan Wonogiri memiliki basis Unit Tani Pangan (UTP) terbesar yang berbanding lurus dengan tingginya total produksi padi, di mana Cilacap mendominasi sebagai produsen utama. Tingginya produktivitas di wilayah-wilayah tersebut sangat selaras dengan luasnya lahan sawah beririgasi teknis, yang menegaskan bahwa infrastruktur pengairan modern menjadi kunci utama stabilitas output pangan daerah. Di sisi lain, daerah seperti Magelang, Banyumas, dan Wonosobo masih sangat bergantung pada irigasi non-teknis atau pengairan sederhana, sehingga wilayah tersebut lebih rentan terhadap risiko kegagalan panen akibat anomali cuaca. Secara keseluruhan, pemetaan indikator ini menegaskan perlunya percepatan modernisasi infrastruktur irigasi di wilayah non-teknis guna meningkatkan serta meratakan kapasitas produksi padi di seluruh kabupaten/kota di Jawa Tengah.
+
+
+# 3. Identifikasi Outlier
+Identifikasi outlier atau data pencilan merupakan tahapan penting untuk mendeteksi adanya nilai ekstrem pada setiap variabel penelitian. Keberadaan outlier pada indikator utama produksi memberikan justifikasi metodologis yang kuat bagi penggunaan algoritma K-Medoids dalam penelitian ini. Karena K-Medoids menggunakan objek nyata (medoid) sebagai pusat klaster, metode ini jauh lebih robust dan tidak mudah terdistorsi oleh nilai ekstrem dibandingkan metode konvensional seperti K-Means. Hal ini memastikan bahwa hasil pengelompokan wilayah lumbung padi di Provinsi Jawa Tengah tetap stabil dan mampu merepresentasikan kondisi wilayah yang sebenarnya secara akurat.
+
+Pendeteksian nilai ekstrem ini dilakukan melalui dua pendekatan, yaitu visualisasi boxplot untuk memetakan sebaran data secara grafis dan perhitungan statistik Interquartile Range (IQR) untuk mengidentifikasi secara spesifik wilayah mana saja yang tergolong sebagai pencilan.
+
+```{r visualisasi_Boxplot, fig.height=12, fig.width=10}
+# 1. Visualisasi Boxplot
+df %>%
+  select(kab_kota, all_of(features)) %>%
+  pivot_longer(cols = all_of(features), names_to = "Variabel", values_to = "Nilai") %>%
+  mutate(
+    # Membersihkan nama variabel agar rapi di plot
+    Variabel = str_replace_all(Variabel, "_unit$|_ton$|_ha$", ""),
+    Variabel = str_replace_all(Variabel, "_", " "),
+    Variabel = str_to_title(Variabel)
+  ) %>%
+  ggplot(aes(x = Variabel, y = Nilai, fill = Variabel)) +
+  geom_boxplot(show.legend = FALSE, outlier.color = "#C00000", outlier.size = 2.5) +
+  facet_wrap(~Variabel, scales = "free", ncol = 2) +
+  scale_fill_manual(values = c("#E2EFDA", "#C5E0B4", "#A9D18E", "#769362")) +
+  labs(title = "Visualisasi Boxplot Deteksi Outlier per Indikator",
+       x = NULL,
+       y = "Nilai Riil") +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(face = "bold", size = 11),
+    axis.text.x = element_blank(), # Menghilangkan label sumbu X yang redundan
+    title = element_text(face = "bold")
+  )
+```
+Berdasarkan visualisasi boxplot di atas, terlihat jelas adanya nilai ekstrem (outlier) pada indikator utama produksi. Keberadaan pencilan ini memberikan justifikasi metodologis yang kuat untuk menggunakan algoritma K-Medoids dalam penelitian ini. Karena menggunakan objek nyata (medoid) sebagai pusat klaster, K-Medoids terbukti jauh lebih robust dan tidak mudah terdistorsi oleh nilai ekstrem dibandingkan K-Means. Pendekatan ini memastikan bahwa hasil pengelompokan wilayah lumbung padi di Provinsi Jawa Tengah tetap stabil dan mampu merepresentasikan kondisi sebenarnya secara akurat.
+
+```{r Identifikasi_Outlier_IQR, fig.height=12, fig.width=10}
+# 2. Identifikasi Outlier dengan Metode IQR
+iqr_outliers <- function(data, id_col = "kab_kota"){
+  map_dfr(features, function(col){
+    v <- data[[col]]
+    q1 <- quantile(v, 0.25, na.rm=TRUE)
+    q3 <- quantile(v, 0.75, na.rm=TRUE)
+    iqr <- q3 - q1
+    lb <- q1 - 1.5*iqr
+    ub <- q3 + 1.5*iqr
+    
+    # Membersihkan nama variabel untuk tampilan tabel
+    clean_col <- str_replace_all(col, "_unit$|_ton$|_ha$", "")
+    clean_col <- str_to_title(str_replace_all(clean_col, "_", " "))
+    
+    data %>%
+      filter(.data[[col]] < lb | .data[[col]] > ub) %>%
+      transmute(
+        Indikator = clean_col, 
+        Wilayah = str_replace(.data[[id_col]], "Kabupaten", "Kab."), 
+        Nilai = .data[[col]], 
+        Batas_Bawah = lb, 
+        Batas_Atas = ub
+      )
+  })
+}
+
+# Mengeksekusi fungsi dan menampilkan tabel
+out_tbl <- iqr_outliers(df, id_col = "kab_kota")
+
+out_tbl %>%
+  kable(caption = "Daftar Wilayah yang Teridentifikasi sebagai Outlier (Metode IQR)",
+        digits = 2,
+        format.args = list(big.mark = "."),
+        col.names = c("Indikator", "Wilayah", "Nilai Riil", "Batas Bawah", "Batas Atas"))
+```
+Berdasarkan tabel hasil identifikasi menggunakan metode Interquartile Range (IQR) di atas, terkonfirmasi adanya nilai ekstrem atas pada indikator utama produksi. Kabupaten Grobogan tercatat sebagai pencilan pada jumlah Unit Tani Pangan (UTP) dan produksi padi, sementara Kabupaten Sragen juga teridentifikasi sebagai pencilan pada total produksi padi karena capaiannya jauh melampaui batas atas kewajaran distribusi data provinsi. Keberadaan wilayah-wilayah dengan kapasitas "raksasa" inilah yang membuktikan pentingnya penggunaan metode K-Medoids, sehingga pusat klaster tidak bergeser secara tidak representatif akibat tarikan dari nilai-nilai ekstrem tersebut.
+
+# 4. Standarisasi Data
+
+Standarisasi data menggunakan metode *Z-Score* merupakan tahapan krusial untuk menyamakan skala seluruh variabel agar variabel dengan rentang nilai yang besar (seperti total produksi) tidak mendominasi perhitungan jarak klaster. Transformasi ini mengubah setiap data sehingga memiliki rata-rata 0 dan simpangan baku 1 melalui rumus $$Z_i = \frac{x_i - \bar{x}}{s}$$ di mana $x_i$ adalah nilai asli, $\bar{x}$ adalah rata-rata variabel, dan $s$ adalah simpangan baku.
+
+```{r standarisasi_data}
+# Melakukan standarisasi (Z-Score) pada variabel indikator
+df_scaled <- df %>% 
+  select(all_of(features)) %>% 
+  scale() %>% 
+  as.data.frame()
+
+# Mengatur nama baris menjadi nama Kabupaten/Kota
+rownames(df_scaled) <- df$kab_kota
+
+# Menampilkan statistik deskriptif setelah standarisasi
+summary(df_scaled)
+```
+Berdasarkan hasil ringkasan di atas, seluruh variabel kini telah berada pada rentang skala yang setara dengan nilai rata-rata (Mean) mendekati 0. Nilai negatif menunjukkan bahwa capaian kabupaten/kota tersebut berada di bawah rata-rata provinsi, sedangkan nilai positif menandakan posisi di atas rata-rata. Melalui kondisi data yang seragam ini, algoritma K-Medoids dapat menghitung jarak kedekatan antarwilayah secara objektif tanpa bias akibat perbedaan satuan pengukuran.
+
+# 5. Uji Asumsi
+
+Sebelum melakukan pemodelan klastering menggunakan K-Medoids, diperlukan serangkaian uji asumsi untuk memastikan kelayakan data. Uji asumsi yang dievaluasi dalam tahapan ini meliputi uji kecukupan data dan uji korelasi antarvariabel.
+
+## 5.1. Uji Kaiser-Meyer-Olkin (KMO)
+
+Uji *Kaiser-Meyer-Olkin* (KMO) adalah metode statistik yang digunakan untuk mengukur kecukupan sampel (*sampling adequacy*), baik secara menyeluruh maupun untuk setiap variabel secara parsial. Uji ini mengevaluasi proporsi varians di antara variabel-variabel penelitian yang mungkin disebabkan oleh faktor-faktor yang mendasarinya. Secara matematis, nilai KMO dihitung melalui rasio koefisien korelasi observasi terhadap koefisien korelasi parsialnya dengan rumus:
+
+$$KMO = \frac{\sum \sum_{i \neq j} r_{ij}^2}{\sum \sum_{i \neq j} r_{ij}^2 + \sum \sum_{i \neq j} a_{ij}^2}$$
+
+di mana $r_{ij}$ merupakan koefisien korelasi sederhana antara variabel $i$ dan $j$, sedangkan $a_{ij}$ merupakan koefisien korelasi parsial antara variabel $i$ dan $j$. Secara teoretis, suatu kumpulan data dianggap layak untuk dianalisis lebih lanjut apabila memiliki nilai KMO lebih besar dari 0,5. Meskipun demikian, karena penelitian ini secara utuh menggunakan observasi data populasi yang mencakup seluruh 35 kabupaten/kota di Provinsi Jawa Tengah (sensus/tanpa teknik penarikan sampel), maka pengujian kecukupan sampel menjadi tidak relevan. Oleh karena itu, uji kelayakan KMO tidak perlu dilakukan pada penelitian ini.
+
+## 5.2. Uji Multikolinearitas
+
+Uji multikolinearitas bertujuan untuk mendeteksi adanya korelasi linier yang sangat kuat antar variabel independen yang digunakan dalam pembentukan klaster. Jika terjadi multikolinearitas, variabel-variabel yang saling tumpang tindih tersebut akan memberikan "bobot ganda" pada karakteristik tertentu, sehingga dapat mendistorsi objektivitas perhitungan jarak *Euclidean* dalam algoritma K-Medoids. Deteksi multikolinearitas dilakukan dengan melihat nilai *Variance Inflation Factor* (VIF) yang dirumuskan sebagai:
+
+$$VIF_i = \frac{1}{1 - R_i^2}$$
+
+di mana $R_i^2$ adalah koefisien determinasi dari regresi variabel independen ke-$i$ terhadap seluruh variabel independen lainnya. Suatu himpunan variabel dinyatakan terbebas dari masalah multikolinearitas yang fatal apabila keseluruhan nilai VIF yang dihasilkan berada di bawah ambang batas toleransi, yaitu kurang dari 10.
+
+```{r uji_multikolinearitas, message=FALSE, warning=FALSE, fig.height=6, fig.width=8}
+library(corrplot)
+library(knitr)
+library(stringr)
+
+# 1. Menghitung Matriks Korelasi
+matriks_korelasi <- cor(df_scaled)
+
+# Visualisasi Matriks Korelasi
+corrplot(matriks_korelasi, 
+         method = "color", 
+         type = "upper", 
+         addCoef.col = "black", 
+         tl.col = "black",      
+         tl.cex = 0.8,          
+         tl.srt = 45,           
+         number.cex = 0.9,      
+         title = "Matriks Korelasi Indikator Lumbung Padi",
+         mar = c(0,0,2,0))
+
+# 2. Menghitung Nilai VIF (Diagonal dari inverse matriks korelasi)
+nilai_vif <- diag(solve(matriks_korelasi))
+
+# Membuat tabel VIF
+vif_tabel <- data.frame(
+  Indikator = str_to_title(str_replace_all(names(nilai_vif), "_", " ")),
+  Nilai_VIF = nilai_vif
+)
+
+vif_tabel %>%
+  kable(caption = "Hasil Uji Asumsi Multikolinearitas (Nilai VIF)",
+        digits = 2,
+        row.names = FALSE,
+        col.names = c("Indikator", "Nilai VIF"))
+```
+Berdasarkan visualisasi matriks korelasi dan tabel uji Variance Inflation Factor (VIF) di atas, seluruh variabel indikator menunjukkan nilai VIF yang berada jauh di bawah ambang batas maksimal (VIF < 10), dengan rasio tertinggi hanya sebesar 4,49 pada variabel total produksi padi. Fakta ini membuktikan bahwa tidak terdapat masalah multikolinearitas yang serius antar indikator, sehingga setiap variabel diyakini membawa informasi unik yang tidak saling mereplikasi. Dengan terpenuhinya asumsi independensi ini, algoritma K-Medoids dapat memproses data secara optimal karena setiap indikator akan memberikan kontribusi pembobotan jarak yang adil dalam membentuk klaster wilayah.
+
+# 6. Penentuan Jumlah Klaster Optimal dengan Metode Silhouette
+
+Penentuan jumlah klaster ($k$) yang optimal merupakan tahapan krusial dalam algoritma partisi seperti K-Medoids. Untuk menentukan nilai $k$ terbaik, penelitian ini menggunakan metode *Silhouette Coefficient* yang mengevaluasi kualitas pengelompokan berdasarkan dua aspek: kohesi (seberapa dekat suatu objek dengan objek lain di klaster yang sama) dan separasi (seberapa jauh objek tersebut dari klaster tetangga terdekat). Secara matematis, nilai *Silhouette* untuk observasi ke-$i$ dihitung dengan rumus:
+
+$$S_i = \frac{b_i - a_i}{\max(a_i, b_i)}$$
+
+di mana $a_i$ adalah rata-rata jarak antara observasi ke-$i$ dengan seluruh observasi lain dalam klaster yang sama, sedangkan $b_i$ adalah rata-rata jarak minimum dari observasi ke-$i$ terhadap seluruh observasi pada klaster lain. Rata-rata dari nilai $S_i$ untuk keseluruhan data disebut sebagai rata-rata *Silhouette width*. Jumlah klaster optimal ditentukan pada nilai $k$ yang menghasilkan rata-rata *Silhouette width* tertinggi, yang menandakan bahwa batas antar klaster terbentuk secara tegas dan tidak tumpang tindih.
+
+```{r penentuan_k_optimal, message=FALSE, warning=FALSE, fig.height=6, fig.width=8}
+# Memuat package untuk visualisasi klastering
+library(cluster)
+library(factoextra)
+
+# Visualisasi metode Silhouette untuk algoritma PAM (Partitioning Around Medoids / K-Medoids)
+fviz_nbclust(df_scaled, pam, method = "silhouette") +
+  labs(title = "Metode Silhouette untuk Penentuan Jumlah Klaster Optimal",
+       x = "Jumlah Klaster (k)",
+       y = "Rata-rata Nilai Silhouette") +
+  theme_minimal() +
+  theme(title = element_text(face = "bold", size = 12),
+        axis.title = element_text(face = "bold"))
+```
+
+Berdasarkan visualisasi grafik Silhouette Score yang dihasilkan dari pengolahan data di atas, terlihat bahwa nilai koefisien mengalami fluktuasi pada setiap jumlah klaster yang diujikan dari $k=2$ hingga $k=10$. Puncak tertinggi pada grafik tersebut dicapai pada saat jumlah klaster $k=5$. Pemilihan 5 klaster sebagai jumlah optimal didasarkan pada fakta bahwa titik tersebut memiliki skor validitas tertinggi dibandingkan skenario lainnya. Skor yang maksimal pada $k=5$ menunjukkan bahwa pada pembagian lima kelompok, setiap kabupaten/kota memiliki struktur internal klaster yang paling kohesif dan terpisah secara jelas dari kelompok lainnya. Dengan demikian, hasil pengelompokan pada tahap ini dianggap paling representatif dalam menggambarkan variasi karakteristik lumbung padi serta kesiapan sistem irigasi di Provinsi Jawa Tengah. Oleh karena itu, analisis K-Medoids Clustering pada tahap selanjutnya akan diproses menggunakan konstanta $k=5$.
+
+# 7. Proses Analisis K-Medoids Clustering
+
+Algoritma K-Medoids atau *Partitioning Around Medoids* (PAM) adalah metode pengelompokan partisi yang menggunakan titik data observasi nyata (medoid) sebagai pusat klaster. Berdasarkan hasil pengujian validitas *Silhouette* sebelumnya, pemodelan ini akan mempartisi data menjadi 5 klaster optimal ($k=5$). Tujuan utama dari algoritma PAM adalah meminimalkan total jarak antara setiap objek data dengan medoid terdekat di klasternya, yang secara matematis dirumuskan melalui fungsi objektif:
+
+$$J = \sum_{i=1}^{n} \min_{1 \le j \le k} d(x_i, m_j)$$
+
+di mana $n$ adalah jumlah total observasi, $x_i$ adalah objek data ke-$i$, $m_j$ adalah medoid dari klaster ke-$j$, dan $d(x_i, m_j)$ merepresentasikan metrik jarak (seperti *Euclidean* atau *Manhattan*) antara objek dengan medoidnya.
+
+```{r kmedoids_clustering, message=FALSE, warning=FALSE, fig.height=8, fig.width=10}
+# 1. Menjalankan algoritma K-Medoids (PAM) dengan k = 5
+set.seed(123) # Mengunci seed agar hasil selalu konsisten saat di-Knit ulang
+kmedoids_model <- pam(df_scaled, k = 5)
+
+# 2. Menggabungkan label klaster ke dalam dataset asli
+df_klaster <- df %>%
+  mutate(Klaster = as.factor(kmedoids_model$clustering))
+
+# 3. Visualisasi Hasil Klastering
+library(factoextra)
+fviz_cluster(kmedoids_model, 
+             data = df_scaled,
+             palette = c("#1B5E20", "#4CAF50", "#FBC02D", "#E65100", "#0D47A1"), 
+             ellipse.type = "convex", # Membentuk poligon batas klaster
+             star.plot = TRUE,        # Menarik garis dari anggota ke medoid
+             repel = TRUE,            # Menghindari teks yang saling tumpang tindih
+             ggtheme = theme_minimal(),
+             main = "Visualisasi Pemetaan 5 Klaster Lumbung Padi di Jawa Tengah") +
+  theme(title = element_text(face = "bold", size = 12))
+```
+
+Berdasarkan hasil pemodelan K-Medoids dengan konstanta $k=5$, ke-35 kabupaten/kota di Provinsi Jawa Tengah telah berhasil dipartisi ke dalam lima klaster secara kokoh. Visualisasi scatter plot di atas memproyeksikan data multivariat ke dalam dua dimensi utama (Principal Components), di mana setiap warna dan poligon mewakili satu klaster yang berpusat pada medoid masing-masing. Terlihat bahwa klaster-klaster tersebut memiliki ukuran dan tingkat sebaran (dispersion) yang berbeda tanpa adanya tumpang tindih (overlapping) yang fatal, mencerminkan keragaman karakteristik riil terkait kapasitas produksi padi dan ketersediaan infrastruktur pengairan yang akan dibedah lebih rinci pada tahap profiling wilayah.
+
+# 8. Penentuan Medoid Klaster
+
+Setelah proses pemodelan selesai, algoritma K-Medoids secara otomatis menunjuk satu objek nyata dari setiap kelompok sebagai titik pusat atau *medoid*. Objek ini merupakan representasi paling tipikal dari seluruh anggota di dalam klasternya. Dengan mengamati nilai riil (data sebelum standarisasi) dari kabupaten/kota yang terpilih sebagai medoid, kita dapat mendefinisikan tipologi dan karakteristik masing-masing klaster secara lebih konkret.
+
+```{r penentuan_medoid}
+library(knitr)
+library(dplyr)
+library(stringr)
+
+# 1. Mengekstrak indeks wilayah yang menjadi pusat klaster (medoid)
+indeks_medoid <- kmedoids_model$id.med
+
+# 2. Menarik data asli berdasarkan indeks medoid
+tabel_medoid <- df[indeks_medoid, ] %>%
+  mutate(Klaster = paste("Klaster", 1:5)) %>%
+  select(Klaster, kab_kota, all_of(features)) %>%
+  # Membersihkan nama wilayah agar rapi
+  mutate(kab_kota = str_replace(kab_kota, "Kabupaten", "Kab."))
+
+# 3. Menampilkan tabel profil medoid
+tabel_medoid %>%
+  kable(caption = "Profil Wilayah Medoid (Pusat Klaster) pada Data Asli",
+        digits = 2,
+        format.args = list(big.mark = "."),
+        col.names = c("Klaster", "Wilayah Medoid", "UTP (Unit)", "Produksi (Ton)", "Irigasi Teknis (Ha)", "Irigasi Non-Teknis (Ha)"))
+```
+
+Hasil analisis pemusatan data pada tabel di atas memberikan gambaran mendalam mengenai spesifikasi tipologi setiap klaster:
+
+Klaster 1 (Wilayah Lumbung Padi Utama/Maha-Lumbung): Mewakili ekosistem padi terlengkap di Jawa Tengah dengan jumlah petani (UTP) paling masif dan hasil produksi yang paling tinggi. Tingginya angka ini secara langsung didorong oleh infrastruktur irigasi teknis yang sudah sangat mapan dan luas.
+
+Klaster 2 (Wilayah Lumbung Padi Penyangga/Sentra Utama): Menjadi basis stok pangan nasional dengan karakteristik unik berupa kepemilikan irigasi non-teknis tertinggi. Meskipun irigasi teknisnya stabil, wilayah ini menunjukkan kemampuan adaptasi melalui pemanfaatan berbagai jenis pengairan untuk menjaga volume produksi tetap besar.
+
+Klaster 3 (Wilayah Lumbung Padi Mandiri/Sentra Potensial): Memiliki sumber daya yang proporsional di seluruh variabel. Kelompok ini berperan penting dalam menjaga kemandirian pangan di tingkat regional dengan skala produksi dan ketersediaan lahan yang berada pada kategori menengah.
+
+Klaster 4 (Wilayah Lumbung Padi Adaptif/Sentra Terbatas): Menunjukkan aktivitas pertanian yang menyesuaikan diri dengan keterbatasan geografis atau lahan. Hal ini terlihat dari rendahnya angka irigasi teknis, namun masih didukung oleh irigasi non-teknis yang cukup luas untuk menopang produksi.
+
+Klaster 5 (Wilayah Lumbung Padi Marginal/Sentra Perkotaan): Memberikan kontribusi minimal terhadap total produksi padi provinsi. Rendahnya jumlah unit usaha tani dan luasan lahan irigasi pada klaster ini mengindikasikan adanya tekanan konversi lahan yang tinggi, yang umumnya terjadi di area perkotaan.
+
+# 9. Keanggotaan Klaster
+
+Berdasarkan hasil pengujian validitas menggunakan *Silhouette Score* sebelumnya, jumlah klaster optimal yang terbentuk adalah lima ($k=5$). Pengelompokan terhadap 35 kabupaten/kota di Provinsi Jawa Tengah ini menghasilkan distribusi keanggotaan yang bervariasi pada tiap klaster. Setiap klaster merepresentasikan tingkatan kapasitas produksi dan ketersediaan infrastruktur irigasi yang berbeda, mulai dari wilayah pilar utama pangan hingga wilayah perkotaan dengan kontribusi marginal. Tabel berikut menyajikan ringkasan jumlah anggota beserta label tipologinya:
+
+```{r ringkasan_anggota}
+library(dplyr)
+library(knitr)
+library(stringr)
+
+# Menyiapkan label tipologi sesuai dengan urutan klaster
+label_tipologi <- c(
+  "Wilayah Lumbung Padi Utama (Maha-Lumbung)",
+  "Wilayah Lumbung Padi Penyangga (Sentra Utama)",
+  "Wilayah Lumbung Padi Mandiri (Sentra Potensial)",
+  "Wilayah Lumbung Padi Adaptif (Sentra Terbatas)",
+  "Wilayah Lumbung Padi Marginal (Sentra Perkotaan)"
+)
+
+# 1. Membuat Tabel Jumlah Anggota Klaster
+tabel_jumlah <- df_klaster %>%
+  group_by(Klaster) %>%
+  summarise(Jumlah = n(), .groups = "drop") %>%
+  mutate(
+    `Label Tipologi` = label_tipologi,
+    Klaster = paste("Klaster", Klaster),
+    # Menambahkan kata Kabupaten/Kota secara dinamis di angkanya
+    `Jumlah Anggota` = paste(Jumlah, "Wilayah")
+  ) %>%
+  select(Klaster, `Label Tipologi`, `Jumlah Anggota`)
+
+tabel_jumlah %>%
+  kable(caption = "Jumlah Anggota Masing-Masing Klaster", align = "l")
+```
+
+Rincian distribusi wilayah untuk masing-masing klaster disajikan secara lengkap pada tabel di bawah ini. Pemetaan keanggotaan ini menjadi landasan penting bagi pemerintah daerah dalam mengidentifikasi kekuatan dan kelemahan masing-masing daerah guna merumuskan strategi pengembangan sektor pertanian yang spesifik dan tepat sasaran.
+
+
+```{r Distribusi_Wilayah}
+# 2. Membuat Tabel Detail Anggota Klaster (Distribusi Wilayah)
+# Mengambil daftar nama wilayah per klaster dan menyingkat "Kabupaten" menjadi "Kab."
+anggota_list <- lapply(1:5, function(i) {
+  df_klaster %>% 
+    filter(as.numeric(Klaster) == i) %>% 
+    pull(kab_kota) %>% 
+    str_replace("Kabupaten", "Kab.")
+})
+
+# Mencari klaster dengan anggota terbanyak untuk menyamakan jumlah baris
+max_len <- max(sapply(anggota_list, length))
+
+# Mengisi baris yang kosong dengan spasi ("") agar tidak error saat dijadikan tabel
+anggota_pad <- lapply(anggota_list, function(x) {
+  c(x, rep("", max_len - length(x)))
+})
+
+# Menggabungkan menjadi satu data frame
+tabel_anggota <- as.data.frame(anggota_pad)
+colnames(tabel_anggota) <- paste("Klaster", 1:5)
+
+# Menampilkan tabel daftar anggota
+tabel_anggota %>%
+  kable(caption = "Distribusi Keanggotaan Klaster Wilayah Padi Jawa Tengah", align = "c")
+```
+
+# 10. Profilisasi Klaster
+
+Pengelompokan kabupaten/kota di Provinsi Jawa Tengah berdasarkan variabel produksi padi dan infrastruktur pengairan mencerminkan kapasitas serta peran strategis masing-masing daerah dalam menjaga ketahanan pangan. Profilisasi ini bertujuan untuk memberikan gambaran mendalam tentang perbedaan karakteristik antar klaster berdasarkan variabel-variabel yang digunakan dalam analisis. 
+
+*(Catatan: Peta Spasial Tipologi Wilayah Lumbung Padi Jawa Tengah disajikan secara terpisah).*
+
+Untuk melihat secara lebih rinci bagaimana posisi dan distribusi setiap kabupaten/kota pada masing-masing indikator, berikut adalah visualisasi persebaran data yang diwarnai berdasarkan keanggotaan klasternya:
+
+```{r profilisasi_klaster, fig.height=12, fig.width=10, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(gridExtra)
+library(purrr)
+
+# Menyiapkan palet warna sesuai tingkat klaster (Maha-lumbung hingga Marginal)
+# Asumsi urutan: K1 (Hijau Sangat Tua), K2 (Hijau Tua), K3 (Hijau Muda), K4 (Hijau Sangat Muda), K5 (Kuning Pucat)
+warna_klaster <- c("1" = "#1B5E20", "2" = "#4CAF50", "3" = "#81C784", "4" = "#C8E6C9", "5" = "#FFF59D")
+
+# Transformasi data untuk plotting
+df_long <- df_klaster %>%
+  select(kab_kota, Klaster, all_of(features)) %>%
+  pivot_longer(cols = all_of(features), names_to = "Variabel", values_to = "Nilai") %>%
+  mutate(
+    Variabel = str_replace_all(Variabel, "_unit$|_ton$|_ha$", ""),
+    Variabel = str_replace_all(Variabel, "_", " "),
+    Variabel = str_to_title(Variabel),
+    kab_kota_clean = str_replace(kab_kota, "Kabupaten", "Kab.")
+  )
+
+# Membuat list plot untuk 4 variabel
+plot_profil <- map(unique(df_long$Variabel), function(var) {
+  df_long %>%
+    filter(Variabel == var) %>%
+    ggplot(aes(x = reorder(kab_kota_clean, Nilai), y = Nilai, fill = Klaster)) +
+    geom_col(show.legend = TRUE) +
+    coord_flip() +
+    scale_fill_manual(values = warna_klaster, name = "Klaster") +
+    labs(title = var, x = NULL, y = "Nilai Riil") +
+    theme_minimal() +
+    theme(
+      axis.text.y = element_text(size = 7), # Mengecilkan font agar 35 wilayah muat
+      title = element_text(size = 11, face = "bold"),
+      legend.position = "bottom",
+      legend.key.size = unit(0.5, "cm")
+    )
+})
+
+# Menampilkan grafik dalam susunan 2x2
+grid.arrange(grobs = plot_profil, ncol = 2)
+```
+
+Hasil analisis klaster wilayah lumbung padi di Provinsi Jawa Tengah menunjukkan pola spasial yang mencerminkan perbedaan karakteristik sumber daya dan kapasitas produksi antar wilayah. Analisis klaster membagi 35 kabupaten/kota menjadi lima kelompok utama:
+
+* Klaster 1 (Hijau Sangat Tua) merupakan kelompok Wilayah Lumbung Padi Utama (Maha-Lumbung) yang mencakup 3 wilayah, yaitu Kabupaten Cilacap, Kabupaten Sragen, dan Kabupaten Grobogan. Wilayah-wilayah tersebut menunjukkan kinerja produksi padi yang paling unggul. Karakteristik utama klaster ini terletak pada ekosistem pertanian yang paling lengkap, di mana jumlah petani yang masif didukung oleh luasan lahan irigasi teknis yang sangat mapan. Wilayah ini merupakan pilar utama ketahanan pangan yang memerlukan perlindungan lahan pertanian berkelanjutan secara ketat.
+
+* Klaster 2 (Hijau Tua) disebut sebagai Wilayah Lumbung Padi Penyangga (Sentra Utama) yang terdiri atas 3 kabupaten, meliputi Kabupaten Pati, Kabupaten Demak, dan Kabupaten Brebes. Wilayah dalam klaster ini merepresentasikan kelompok dengan tingkat pengembangan usaha tani yang besar dan menjadi basis stok pangan nasional. Keunggulan spesifik wilayah ini terletak pada penguasaan luas lahan irigasi non-teknis tertinggi, yang menunjukkan fleksibilitas pengairan yang baik dalam menjaga stabilitas produksi berskala besar.
+
+* Klaster 3 (Hijau Muda) adalah Wilayah Lumbung Padi Mandiri (Sentra Potensial) yang mencakup 10 wilayah, di antaranya Kabupaten Kebumen, Purworejo, Boyolali, hingga Tegal. Klaster ini memiliki sumber daya yang proporsional. Wilayah-wilayah ini berperan penting dalam menjaga kemandirian pangan regional secara konsisten melalui keseimbangan antara jumlah usaha tani dan infrastruktur irigasi yang tersedia.
+
+* Klaster 4 (Hijau Sangat Muda) merupakan Wilayah Lumbung Padi Adaptif (Sentra Terbatas) yang mencakup 13 wilayah terbesar, mulai dari Kabupaten Banyumas hingga Batang. Wilayah ini menunjukkan karakteristik pertanian yang menyesuaikan dengan keterbatasan lahan atau kondisi geografis. Meskipun produksinya lebih rendah dibandingkan sentra utama, klaster ini tetap memberikan kontribusi yang berarti dan memerlukan intervensi kebijakan yang berfokus pada penguatan kapasitas lahan dan optimasi irigasi.
+
+* Klaster 5 (Kuning Pucat) mencakup 6 wilayah perkotaan, yaitu Kota Magelang, Surakarta, Salatiga, Semarang, Pekalongan, dan Tegal. Wilayah ini menempati posisi paling rendah dalam kinerja produksi padi. Rendahnya angka ini merupakan konsekuensi logis dari tekanan konversi lahan yang tinggi menjadi kawasan pemukiman dan industri, sehingga fokus ekonominya bergeser pada sektor non-pertanian.
+
+Implikasi Kebijakan
+Gambaran posisi masing-masing wilayah berdasarkan hasil klaster ini memberikan dasar penting bagi perumusan strategi pembangunan pertanian yang lebih efektif di Jawa Tengah. Pendekatan kebijakan berbasis tipologi sangat diperlukan untuk menyesuaikan intervensi dengan kebutuhan spesifik daerah:
+
+* Wilayah pada Klaster 1 dan 2 perlu difokuskan pada program intensif perlindungan lahan sawah lestari dan optimalisasi hasil produksi.
+
+* Wilayah dalam Klaster 3 dan 4 dapat diarahkan pada penguatan infrastruktur irigasi serta pendampingan teknis untuk meningkatkan produktivitas lahan yang ada.
+
+* Sementara itu, untuk wilayah pada Klaster 5, kebijakan dapat difokuskan pada penguatan rantai distribusi pangan perkotaan serta pengembangan pertanian perkotaan (urban farming) pada lahan terbatas guna mendukung ketahanan pangan lokal di tengah tingginya tekanan konversi lahan.
+
+# 11. Kesimpulan
+Berdasarkan hasil analisis *K-Medoids Clustering* terhadap karakteristik tipologi wilayah lumbung padi di Provinsi Jawa Tengah, dapat ditarik beberapa kesimpulan utama sebagai berikut:
+
+* **Ketangguhan Metode:** Penggunaan algoritma K-Medoids terbukti sangat tepat dan *robust* (tangguh) dalam menangani data indikator pertanian yang memiliki nilai ekstrem (*outlier*). Melalui evaluasi validitas menggunakan *Silhouette Coefficient*, ditemukan bahwa struktur pengelompokan yang paling representatif dan optimal tercapai pada pembagian 5 klaster ($k=5$).
+* **Pemetaan Tipologi Wilayah:** Pengelompokan terhadap 35 kabupaten/kota menghasilkan lima profil tipologi yang mencerminkan kapasitas dan peran strategis masing-masing daerah:
+  * **Klaster 1 (Wilayah Lumbung Padi Utama / Maha-Lumbung):** Terdiri atas 4 wilayah (Kab. Cilacap, Kab. Kebumen, Kab. Grobogan, Kab. Blora) yang menjadi pilar utama ketahanan pangan dengan keunggulan pada jumlah Unit Usaha Tani (UTP) masif dan infrastruktur irigasi teknis yang mapan.
+  * **Klaster 2 (Wilayah Lumbung Padi Penyangga / Sentra Utama):** Merupakan kelompok terbesar yang mencakup 13 wilayah (Kab. Banyumas, Kab. Purbalingga, dkk). Klaster ini menjadi basis stok nasional dengan karakteristik unik berupa fleksibilitas pengairan melalui pemanfaatan irigasi non-teknis secara maksimal.
+  * **Klaster 3 (Wilayah Lumbung Padi Mandiri / Sentra Potensial):** Mencakup 6 wilayah (Kab. Banjarnegara, Kab. Purworejo, dkk) dengan sumber daya proporsional, berperan penting menjaga kemandirian pangan di tingkat regional melalui keseimbangan usaha tani dan infrastruktur.
+  * **Klaster 4 (Wilayah Lumbung Padi Adaptif / Sentra Terbatas):** Terdiri atas 6 wilayah (Kab. Klaten, Kab. Sragen, dkk) yang menunjukkan kemampuan adaptasi aktivitas pertanian di tengah keterbatasan ruang atau kapasitas irigasi teknis.
+  * **Klaster 5 (Wilayah Lumbung Padi Marginal / Sentra Perkotaan):** Terdiri atas 6 kota (Kota Magelang, Kota Surakarta, Kota Salatiga, Kota Semarang, Kota Pekalongan, Kota Tegal) yang memberikan kontribusi produksi sangat minimal akibat tingginya tekanan konversi lahan menjadi kawasan industri dan pemukiman.
+  
+* **Implikasi Kebijakan:** Hasil pengelompokan ini menegaskan bahwa strategi pembangunan pertanian di Jawa Tengah memerlukan pendekatan spesifik berbasis tipologi wilayah. Kebijakan untuk Klaster 1 dan 2 harus memprioritaskan perlindungan Lahan Pertanian Pangan Berkelanjutan (LP2B), Klaster 3 dan 4 diarahkan pada modernisasi kapasitas irigasi dan pendampingan teknis intensif, sedangkan Klaster 5 perlu difokuskan pada penguatan rantai pasok pangan perkotaan dan inisiatif *urban farming*.
